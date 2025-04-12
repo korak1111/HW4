@@ -1,0 +1,42 @@
+# Exclude all .zip files
+*.zip
+
+# Exclude all .pyc files
+*.pyc
+
+# Do not store image datasets on GitHub!  
+# GitHub may apply compression algorithms that alter pixel values, leading to poor model inference performance  
+*.jpg
+*.png
+
+
+# Exclude specific directories
+homework2/logs/
+homework2/log/
+homework2/run/
+homework2/runs/
+homework2/data/
+homework2/classification_data/
+homework2/road_data/
+homework2/drive_data/
+homework2/cnn/
+
+homework3/logs/
+homework3/log/
+homework3/run/
+homework3/runs/
+homework3/data/
+homework3/classification_data/
+homework3/road_data/
+homework3/drive_data/
+
+homework4/logs/
+homework4/log/
+homework4/run/
+homework4/runs/
+homework4/data/
+homework4/classification_data/
+homework4/road_data/
+homework4/drive_data/
+
+
