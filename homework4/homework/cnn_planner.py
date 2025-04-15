@@ -48,16 +48,17 @@ def train(args):
     log_dir = Path(args.log_dir) / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     logger = tb.SummaryWriter(log_dir)
 
-    # Load train and validation datasets
+    # Load datasets
     train_loader = load_data("drive_data/train", batch_size=args.batch_size, shuffle=True)
     val_loader   = load_data("drive_data/val", batch_size=args.batch_size, shuffle=False)
 
-    # Initialize model, optimizer, and loss function
+    # Initialize model, optimizer, and loss
     model = load_model(args.model_name)
     model = model.to(args.device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     loss_fn = nn.HuberLoss(delta=0.5)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
     # Early stopping setup
     best_val_loss = float("inf")
@@ -70,18 +71,25 @@ def train(args):
         total_train_loss = 0.0
 
         for batch in train_loader:
-            track_left = batch["track_left"].to(args.device)
-            track_right = batch["track_right"].to(args.device)
-            waypoints_gt = batch["waypoints"].to(args.device)
-            waypoint_mask = batch.get("waypoint_mask", (waypoints_gt.abs().sum(dim=-1) != 0).bool()).to(args.device)
+            image = batch["image"].to(args.device)                  # (B, 3, H, W)
+            waypoints_gt = batch["waypoints"].to(args.device)       # (B, N, 2)
+            # waypoint_mask = batch.get("waypoint_mask", (waypoints_gt.abs().sum(dim=-1) != 0).bool()).to(args.device)
 
             optimizer.zero_grad()
-            waypoints_pred = model(track_left=track_left, track_right=track_right)
+            waypoints_pred = model(image=image)                     # (B, N, 2)
 
-            # Apply mask
-            mask = waypoint_mask.unsqueeze(-1).expand_as(waypoints_gt)
-            loss = loss_fn(waypoints_pred[mask], waypoints_gt[mask])
+            # Validity check: mask out invalid waypoints
+            valid_mask = torch.isfinite(waypoints_gt) & (waypoints_gt.abs() < 1e3)
 
+            if not valid_mask.any():
+                print("All waypoints invalid in batch. Skipping.")
+                continue
+
+            # Mask predicted and ground truth
+            waypoints_gt_valid = waypoints_gt[valid_mask]
+            waypoints_pred_valid = waypoints_pred[valid_mask]
+
+            loss = loss_fn(waypoints_pred_valid, waypoints_gt_valid)
             loss.backward()
             optimizer.step()
 
@@ -92,20 +100,26 @@ def train(args):
         avg_train_loss = total_train_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{args.num_epochs} - Train Loss: {avg_train_loss:.4f}")
 
-        # Validation loop
+
         model.eval()
         total_val_loss = 0.0
         with torch.no_grad():
             for batch in val_loader:
-                track_left = batch["track_left"].to(args.device)
-                track_right = batch["track_right"].to(args.device)
+                image = batch["image"].to(args.device)
                 waypoints_gt = batch["waypoints"].to(args.device)
-                waypoint_mask = batch.get("waypoint_mask", (waypoints_gt.abs().sum(dim=-1) != 0).bool()).to(args.device)
+                waypoints_pred = model(image=image)
 
-                waypoints_pred = model(track_left=track_left, track_right=track_right)
 
-                mask = waypoint_mask.unsqueeze(-1).expand_as(waypoints_gt)
-                loss = loss_fn(waypoints_pred[mask], waypoints_gt[mask])
+                valid_mask = torch.isfinite(waypoints_gt) & (waypoints_gt.abs() < 1e3)
+
+                if not valid_mask.any():
+                    print("All waypoints invalid in val batch. Skipping.")
+                    continue
+
+                waypoints_gt_valid = waypoints_gt[valid_mask]
+                waypoints_pred_valid = waypoints_pred[valid_mask]
+
+                loss = loss_fn(waypoints_pred_valid, waypoints_gt_valid)
                 total_val_loss += loss.item()
 
         avg_val_loss = total_val_loss / len(val_loader)
@@ -131,16 +145,14 @@ def train(args):
 
 
 
-
-
 if __name__ == "__main__":
     print("Time to train")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="mlp_planner", help="Path to save the model")
     parser.add_argument("--log_dir", type=str, default="logs", help="TensorBoard log directory")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=100)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--num_epochs", type=int, default=50)
     args = parser.parse_args()
 
     # Manually set device here
